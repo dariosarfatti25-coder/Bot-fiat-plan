@@ -1,0 +1,9 @@
+# Bot Ventas WhatsApp (IA)
+
+Bot en Python/Flask que responde por WhatsApp (Twilio), usa OpenAI para conversación, genera pre-cotizaciones en PDF y las envía por WhatsApp.
+
+Pasos:
+1. Copiar `.env.example` a `.env` y completar claves.
+2. Subir repo a GitHub.
+3. Conectar Railway y agregar variables de entorno.
+4. Configurar Twilio WhatsApp Sandbox y poner webhook: `https://<HOST_ADDRESS>/whatsapp-webhook`.
