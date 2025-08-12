@@ -1,0 +1,27 @@
+# OpenAI
+OPENAI_API_KEY=tu_api_key_openai
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.6
+
+# Twilio
+TWILIO_SID=tu_twilio_sid
+TWILIO_AUTH_TOKEN=tu_twilio_auth_token
+TWILIO_WHATSAPP_NUMBER=+14155238886
+
+# Pipedrive (opcional)
+PIPEDRIVE_API_TOKEN=tu_token_pipedrive
+
+# Host (usa la URL que Railway te asigne)
+HOST_ADDRESS=tu_dominio_o_ip_publica
+PORT=8000
+
+# Email SMTP
+SMTP_SERVER=smtp.tu-email.com
+SMTP_PORT=587
+SMTP_USER=tu-email@dominio.com
+SMTP_PASS=tu-contraseña
+NOTIFY_EMAIL=tu-email-destino@dominio.com
+
+# Opciones
+DEFAULT_PLAZO=60
+SYSTEM_PROMPT=Eres un asesor comercial experto en planes de ahorro y venta de autos. Mantén tono profesional y en español.
