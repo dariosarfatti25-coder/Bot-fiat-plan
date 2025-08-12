@@ -1,0 +1,59 @@
+from flask import Flask, request, send_file
+import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from twilio.twiml.messaging_response import MessagingResponse
+from fpdf import FPDF
+
+app = Flask(__name__)
+
+# Generar PDF de cotización
+def generar_pdf(nombre, modelo, precio):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=16)
+    pdf.cell(200, 10, "Cotizacion Plan de Ahorro", ln=True, align="C")
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, f"Cliente: {nombre}", ln=True)
+    pdf.cell(200, 10, f"Modelo: {modelo}", ln=True)
+    pdf.cell(200, 10, f"Precio: {precio}", ln=True)
+    pdf.output("cotizacion.pdf")
+    return "cotizacion.pdf"
+
+# Enviar email con PDF
+def enviar_email(destinatario, archivo_pdf):
+    msg = MIMEMultipart()
+    msg['From'] = os.getenv("SMTP_USER")
+    msg['To'] = destinatario
+    msg['Subject'] = "Cotización Plan de Ahorro"
+    with open(archivo_pdf, "rb") as f:
+        attach = MIMEText(f.read(), "base64", "utf-8")
+        attach.add_header('Content-Disposition', 'attachment', filename="cotizacion.pdf")
+        msg.attach(attach)
+    with smtplib.SMTP(os.getenv("SMTP_SERVER"), int(os.getenv("SMTP_PORT"))) as server:
+        server.starttls()
+        server.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASS"))
+        server.send_message(msg)
+
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp():
+    mensaje = request.form.get("Body").lower()
+    resp = MessagingResponse()
+    
+    if "plan" in mensaje:
+        resp.message("Hola, ¿me podrías indicar tu nombre y el modelo de auto que te interesa?")
+    elif "cotizar" in mensaje:
+        nombre = "Cliente Demo"
+        modelo = "Fiat Cronos"
+        precio = "$10.000.000"
+        pdf_file = generar_pdf(nombre, modelo, precio)
+        enviar_email(os.getenv("NOTIFY_EMAIL"), pdf_file)
+        resp.message("Te envié la cotización por email 📧")
+    else:
+        resp.message("Soy tu asistente de ventas. Escribe 'plan' para empezar o 'cotizar' para recibir una oferta.")
+    
+    return str(resp)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
