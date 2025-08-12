@@ -1,0 +1,54 @@
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import cm
+from datetime import datetime
+import os
+
+def generar_precotizacion_pdf(filename, cliente, modelo, plan, entrada, cuota, plazo, promociones=None):
+    c = canvas.Canvas(filename, pagesize=A4)
+    width, height = A4
+
+    # Si querés usar logo, coloca logo.png en la carpeta del proyecto
+    logo_path = os.path.join(os.getcwd(), 'logo.png')
+    if os.path.exists(logo_path):
+        try:
+            c.drawImage(logo_path, 3*cm, height - 4*cm, width=4*cm, preserveAspectRatio=True, mask='auto')
+        except Exception as e:
+            print('No se pudo dibujar el logo:', e)
+
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(8*cm, height - 3*cm, "Pre-Cotización — Plan de Ahorro")
+    c.setFont("Helvetica", 10)
+    c.drawRightString(width - 3*cm, height - 3*cm, f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+
+    # Datos cliente
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(3*cm, height - 6*cm, "Datos del Cliente")
+    c.setFont("Helvetica", 11)
+    c.drawString(3*cm, height - 6.7*cm, f"Nombre: {cliente.get('nombre', 'No disponible')}")
+    c.drawString(3*cm, height - 7.4*cm, f"Teléfono: {cliente.get('telefono', 'No disponible')}")
+
+    # Detalle
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(3*cm, height - 9*cm, "Detalle del Plan")
+    c.setFont("Helvetica", 11)
+    c.drawString(3*cm, height - 9.7*cm, f"Modelo: {modelo}")
+    c.drawString(3*cm, height - 10.4*cm, f"Plan: {plan}")
+    c.drawString(3*cm, height - 11.1*cm, f"Entrada: ${entrada:,.0f}")
+    c.drawString(3*cm, height - 11.8*cm, f"Cuota mensual: ${cuota:,.0f}")
+    c.drawString(3*cm, height - 12.5*cm, f"Plazo: {plazo} meses")
+
+    if promociones:
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(3*cm, height - 14*cm, "Promociones y Beneficios")
+        c.setFont("Helvetica", 11)
+        text = c.beginText(3*cm, height - 14.7*cm)
+        for line in promociones:
+            text.textLine(f"- {line}")
+        c.drawText(text)
+
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(3*cm, 2*cm, "Documento generado automáticamente. Sujeto a condiciones y aprobación financiera.")
+
+    c.showPage()
+    c.save()
