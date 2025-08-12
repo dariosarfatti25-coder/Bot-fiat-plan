@@ -1,0 +1,156 @@
+import os
+import re
+import requests
+from flask import Flask, request, jsonify, send_from_directory
+from dotenv import load_dotenv
+import openai
+from twilio.rest import Client
+from precotizacion import generar_precotizacion_pdf
+from email_notify import enviar_notificacion_email
+
+load_dotenv()
+
+app = Flask(__name__)
+
+# Config
+openai.api_key = os.getenv("OPENAI_API_KEY")
+TWILIO_SID = os.getenv("TWILIO_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
+PIPEDRIVE_API_TOKEN = os.getenv("PIPEDRIVE_API_TOKEN")
+PIPEDRIVE_BASE_URL = "https://api.pipedrive.com/v1"
+PDF_FOLDER = os.path.join(os.getcwd(), "pdfs")
+os.makedirs(PDF_FOLDER, exist_ok=True)
+
+client = Client(TWILIO_SID, TWILIO_AUTH_TOKEN)
+user_sessions = {}
+
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT") or (
+    "Eres un asesor comercial experto en planes de ahorro y venta de autos.\n"
+    "Califica al lead: preguntar uso (personal/empresa/mixto), entrada disponible, cuota máxima, modelo preferido.\n"
+    "Maneja objeciones y ofrece pre-cotización. Escala a humano cuando sea necesario. Responde en español.")
+
+# Helpers
+
+def send_whatsapp_message(to, message):
+    client.messages.create(
+        from_=f"whatsapp:{TWILIO_WHATSAPP_NUMBER}",
+        to=f"whatsapp:{to}",
+        body=message
+    )
+
+def send_whatsapp_pdf(to, pdf_filename):
+    host = os.getenv("HOST_ADDRESS")
+    port = os.getenv("PORT", "8000")
+    url = f"https://{host}/pdfs/{pdf_filename}" if host and host.startswith("http") else f"http://{host}:{port}/pdfs/{pdf_filename}"
+    # Si Railway proporciona https, usa https
+    client.messages.create(
+        from_=f"whatsapp:{TWILIO_WHATSAPP_NUMBER}",
+        to=f"whatsapp:{to}",
+        media_url=[url],
+        body="Aquí está tu pre-cotización. ¿Querés agendar una visita?"
+    )
+
+def save_lead_to_pipedrive(name, phone, data):
+    if not PIPEDRIVE_API_TOKEN:
+        return
+    url = f"{PIPEDRIVE_BASE_URL}/persons?api_token={PIPEDRIVE_API_TOKEN}"
+    payload = {
+        "name": name,
+        "phone": phone,
+        "custom_fields": data
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print("Error Pipedrive:", e)
+
+# Extracción simple, se puede mejorar con spaCy
+
+def extract_data_from_text(text):
+    data = {}
+    if re.search(r"\b(personal|empresa|mixto)\b", text, re.I):
+        data["uso"] = re.search(r"\b(personal|empresa|mixto)\b", text, re.I).group(1).lower()
+    entrada_match = re.search(r"(\d{4,7})", text.replace('.', '').replace(',', ''))
+    if entrada_match:
+        data["entrada"] = int(entrada_match.group(1))
+    cuotas_match = re.findall(r"(\d{4,7})", text.replace('.', '').replace(',', ''))
+    if len(cuotas_match) > 1:
+        data["cuota_max"] = int(cuotas_match[1])
+    elif len(cuotas_match) == 1:
+        data["cuota_max"] = int(cuotas_match[0])
+    marcas = ["fiat", "renault", "toyota", "volkswagen", "chevrolet", "peugeot"]
+    for marca in marcas:
+        if marca in text.lower():
+            data["modelo_preferido"] = marca.capitalize()
+            break
+    return data
+
+
+def get_ai_response(user_id, user_message):
+    session = user_sessions.get(user_id, {"history": [], "data": {}})
+    extracted = extract_data_from_text(user_message)
+    session["data"].update(extracted)
+    session["history"].append({"role": "user", "content": user_message})
+    data_str = ", ".join(f"{k}: {v}" for k, v in session["data"].items())
+    system_msg = SYSTEM_PROMPT + ("\nDatos recopilados: " + data_str if data_str else "")
+    messages = [{"role": "system", "content": system_msg}] + session["history"]
+
+    try:
+        response = openai.ChatCompletion.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=messages,
+            temperature=float(os.getenv("OPENAI_TEMPERATURE", 0.6)),
+            max_tokens=400
+        )
+        ai_text = response.choices[0].message["content"]
+    except Exception as e:
+        ai_text = "Perdón, tuve un error conectando con el servicio de IA. Te derivo a un asesor humano."
+        print("OpenAI error:", e)
+
+    session["history"].append({"role": "assistant", "content": ai_text})
+    user_sessions[user_id] = session
+    return ai_text, session["data"]
+
+
+@app.route('/pdfs/<path:filename>')
+def serve_pdf(filename):
+    return send_from_directory(PDF_FOLDER, filename)
+
+
+@app.route('/whatsapp-webhook', methods=['POST'])
+def whatsapp_webhook():
+    try:
+        from_number = request.form.get('From', '').replace('whatsapp:', '')
+        user_message = request.form.get('Body', '').strip() or ""
+        ai_response, extracted_data = get_ai_response(from_number, user_message)
+        send_whatsapp_message(from_number, ai_response)
+
+        # Guardar lead y generar PDF cuando se tengan datos mínimos
+        if extracted_data.get('modelo_preferido') and extracted_data.get('cuota_max'):
+            lead_name = f"Lead {from_number[-4:]}"
+            save_lead_to_pipedrive(name=lead_name, phone=from_number, data=extracted_data)
+            pdf_filename = f"precotizacion_{from_number[-4:]}.pdf"
+            pdf_path = os.path.join(PDF_FOLDER, pdf_filename)
+            cliente = {"nombre": lead_name, "telefono": from_number}
+            generar_precotizacion_pdf(
+                pdf_path,
+                cliente=cliente,
+                modelo=extracted_data.get('modelo_preferido', 'Modelo'),
+                plan="Plan Ahorro 60",
+                entrada=extracted_data.get('entrada', 0),
+                cuota=extracted_data.get('cuota_max', 0),
+                plazo=int(os.getenv('DEFAULT_PLAZO', 60)),
+                promociones=["Tasa fija durante todo el plan", "Sin gastos administrativos"]
+            )
+            # Enviar PDF por WhatsApp
+            send_whatsapp_pdf(from_number, pdf_filename)
+
+        return jsonify({'status': 'ok'}), 200
+    except Exception as e:
+        enviar_notificacion_email("Error en webhook", f"Error: {e}")
+        return jsonify({'status': 'error', 'detail': str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8000)))
